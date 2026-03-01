@@ -676,8 +676,44 @@ class BankStatementAnalyser:
             return '✅ Disciplined Month'
 
         self._df_monthly['behaviour_profile'] = self._df_monthly.apply(profile, axis=1)
-        self._df_monthly['nudges'] = self._df_monthly['behaviour_profile'].apply(
-            lambda p: self.NUDGE_MAP.get(p, []))
+
+        def generate_nudges(row):
+            p = row['behaviour_profile']
+            total_spend = row['total_spend']
+            eom_spend_ratio = row['eom_spend_ratio']
+            base_nudges = self.NUDGE_MAP.get(p, []).copy()
+            
+            # Make nudges dynamic based on the actual month's data to avoid exact duplicates
+            dynamic_nudges = []
+            import random
+            
+            if p == '🔥 Overspender':
+                dynamic_nudges.append(f"🚨 You spent ₹{total_spend:,.0f} this month, pushing your budget to the limit.")
+                dynamic_nudges.append(f"💳 Set a hard cap of 80% of this month's income for next month.")
+            elif p == '📅 Month-End Binger':
+                dynamic_nudges.append(f"💰 Your end-of-month spend was {eom_spend_ratio:.1f}x higher than usual.")
+                dynamic_nudges.append(f"📉 Try to lock away 20% of your balance before the 20th of the month.")
+            elif p == '🎮 Lifestyle Overindulger':
+                dynamic_nudges.append(f"🏷️ A large chunk of your ₹{total_spend:,.0f} went to impulsive categories.")
+                dynamic_nudges.append(f"📱 Try setting a weekly limit for entertainment and dining.")
+            elif p == '⚡ High Impulse Month':
+                dynamic_nudges.append(f"⏰ High risk score detected ({row['impulse_risk_score']:.1f}). Apply a 24h cooling off rule.")
+                dynamic_nudges.append(f"📈 Review your spending daily to catch unplanned purchases.")
+            elif p == '🔄 Binge-Pause Cycler':
+                dynamic_nudges.append(f"📅 Your spending was highly volatile this month (CV: {row['cv_amount']:.2f}).")
+                dynamic_nudges.append(f"📊 Try a weekly envelope budget to smooth out your cash flow.")
+            elif p == '⚠️ Situational Spender':
+                dynamic_nudges.append(f"📣 You had specific high-spend days. Review your largest transactions.")
+                dynamic_nudges.append(f"🧘 Pause before large transactions: 'Is this planned?'")
+            elif p == '✅ Disciplined Month':
+                dynamic_nudges.append(f"🎖️ Great month! You kept your risk score low at {row['impulse_risk_score']:.1f}.")
+                dynamic_nudges.append(f"📈 Consider investing whatever surplus you have left in a SIP or FD.")
+            else:
+                dynamic_nudges = base_nudges
+                
+            return dynamic_nudges
+
+        self._df_monthly['nudges'] = self._df_monthly.apply(generate_nudges, axis=1)
 
     # ──────────────────────────────────────────────────────────────────────────
     # STEP 7 — OPTIONAL ML CLASSIFICATION
@@ -763,7 +799,10 @@ class BankStatementAnalyser:
         ax.set_ylabel('Score (0–100)')
         ax.tick_params(axis='x', rotation=45, labelsize=7)
         ax.legend(fontsize=8); ax.grid(axis='y', alpha=0.3)
-        charts['risk_timeline'] = self._fig_to_b64(fig)
+        charts['risk_timeline'] = {
+            'base64': self._fig_to_b64(fig),
+            'interpretation': "This timeline tracks how your spending impulsivity fluctuates month-over-month. Green bars represent months where your spending was controlled and disciplined. Yellow and Red bars indicate periods where your spending patterns became erratic, showing high variance or sudden spikes, which pushes your risk score up."
+        }
         plt.close(fig)
 
         # ── Chart 2: Method Breakdown ─────────────────────────────────────────
@@ -776,7 +815,10 @@ class BankStatementAnalyser:
         ax.set_xticklabels(dm['month_year'].astype(str), rotation=45, ha='right', fontsize=7)
         ax.set_title('Risk Score — Method Breakdown per Month', fontweight='bold')
         ax.set_ylabel('Score (0–100)'); ax.legend(fontsize=8); ax.grid(axis='y', alpha=0.3)
-        charts['method_breakdown'] = self._fig_to_b64(fig)
+        charts['method_breakdown'] = {
+            'base64': self._fig_to_b64(fig),
+            'interpretation': "Here we break down the overall risk score into our three ML methods. Z-Score flags simple unusually large transactions. Isolation Forest detects hidden anomalies across multiple factors simultaneously. PCA Error highlights months where your spending fundamentally deviated from your usual 'healthy' baseline print."
+        }
         plt.close(fig)
 
         # ── Chart 3: Category Spend ───────────────────────────────────────────
@@ -787,7 +829,10 @@ class BankStatementAnalyser:
         cat_spend.plot.barh(ax=ax, color=colors_c)
         ax.set_title('Total Spend by Category  (🔴 = Impulsive)', fontweight='bold')
         ax.set_xlabel(f'{self.currency}'); ax.tick_params(axis='y', labelsize=8)
-        charts['category_spend'] = self._fig_to_b64(fig)
+        charts['category_spend'] = {
+            'base64': self._fig_to_b64(fig),
+            'interpretation': "This chart visualises where your money goes. Categories highlighted in red (like Food, Entertainment, Shopping) are traditionally classified as 'Impulsive' and heavily influence your risk score if they dominate your overall cash outflow."
+        }
         plt.close(fig)
 
         # ── Chart 4: Monthly Spend Trend ──────────────────────────────────────
@@ -798,41 +843,52 @@ class BankStatementAnalyser:
         ax.set_ylabel(f'{self.currency} Withdrawn')
         ax.tick_params(axis='x', rotation=45, labelsize=7)
         for i, v in enumerate(monthly_s.values):
-            ax.text(i, v + monthly_s.max() * 0.01, f'{self.currency}{v/1000:.1f}k',
-                    ha='center', fontsize=6)
-        charts['monthly_trend'] = self._fig_to_b64(fig)
+            ax.text(i, v + (v * 0.02), f'{v/1000:.0f}k', ha='center', va='bottom', fontsize=7)
+        charts['monthly_trend'] = {
+            'base64': self._fig_to_b64(fig),
+            'interpretation': "A simple overview of your total cash outflow over time. Consistent bar heights indicate stable budgeting, while huge spikes suggest unexpected large expenses or unbudgeted shopping sprees."
+        }
         plt.close(fig)
 
-        # ── Chart 5: Balance Trend (if available) ────────────────────────────
-        if 'balance' in self._column_map and df['balance'].notna().any():
+        # ── Chart 5: Balance Trend ────────────────────────────────────────────
+        if 'balance' in df.columns and df['balance'].notna().any():
             fig, ax = plt.subplots(figsize=(12, 4))
-            df.plot(x='date', y='balance', ax=ax, color='green', lw=1.5, legend=False)
-            ax.set_title('Account Balance Over Time', fontweight='bold')
-            ax.yaxis.set_major_formatter(
-                mticker.FuncFormatter(lambda v, _: f'{self.currency}{v/1000:.0f}k'))
-            ax.tick_params(axis='x', rotation=30)
-            charts['balance_trend'] = self._fig_to_b64(fig)
+            df_b = df.dropna(subset=['balance'])
+            ax.plot(df_b['date'], df_b['balance'], color='#27AE60', lw=2)
+            ax.fill_between(df_b['date'], df_b['balance'], color='#27AE60', alpha=0.1)
+            ax.set_title('Running Balance Over Time', fontweight='bold')
+            ax.set_ylabel(f'Balance ({self.currency})')
+            ax.grid(alpha=0.3)
+            # format y axis
+            ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, p: format(int(x), ',')))
+            charts['balance_trend'] = {
+                'base64': self._fig_to_b64(fig),
+                'interpretation': "Your running balance acts as the ultimate pulse check. A consistent upward trend indicates healthy saving habits. Sharp drops, especially towards zero, represent cash flow crunches."
+            }
             plt.close(fig)
 
-        # ── Chart 6: EOM vs Regular ───────────────────────────────────────────
-        fig, ax = plt.subplots(figsize=(6, 4))
-        eom = spends.groupby('is_end_of_month')['withdrawal'].mean()
-        ax.bar(['Regular Days', 'End of Month'], eom.values,
-               color=['#3498DB', '#E74C3C'], alpha=0.85)
-        ax.set_title('Avg Transaction: Regular vs End-of-Month', fontweight='bold')
-        ax.set_ylabel(f'Avg {self.currency}')
-        charts['eom_comparison'] = self._fig_to_b64(fig)
+        # ── Chart 6: End of Month vs Regular ──────────────────────────────────
+        fig, ax = plt.subplots(figsize=(10, 5))
+        eom = dm['eom_spend_ratio'].mean()
+        ax.bar(['Regular (Days 1-24)', 'End of Month (Days 25+)'],
+               [1, eom], color=['#34495E', '#E74C3C'])
+        ax.set_title('Average Spend Intensity: Regular vs Month-End', fontweight='bold')
+        charts['eom_comparison'] = {
+            'base64': self._fig_to_b64(fig),
+            'interpretation': "Many people binge spend their remaining cash right before payday. This chart compares your spending intensity at the end of the month (Days 25+) against the rest of the month. A high red bar signals 'Month-End Binger' behaviour."
+        }
         plt.close(fig)
 
-        # ── Chart 7: Behaviour Profile Distribution ───────────────────────────
-        fig, ax = plt.subplots(figsize=(9, 4))
-        pcount = dm['behaviour_profile'].value_counts()
-        colors_p = ['#E74C3C','#E67E22','#F1C40F','#3498DB','#2ECC71','#9B59B6','#1ABC9C']
-        pcount.plot.barh(ax=ax, color=colors_p[:len(pcount)])
-        ax.set_title('Behaviour Profile Distribution', fontweight='bold')
-        for i, v in enumerate(pcount.values):
-            ax.text(v + 0.05, i, str(v), va='center')
-        charts['behaviour_profiles'] = self._fig_to_b64(fig)
+        # ── Chart 7: Behaviour Profiles Pie ───────────────────────────────────
+        fig, ax = plt.subplots(figsize=(6, 6))
+        prof_counts = dm['behaviour_profile'].value_counts()
+        ax.pie(prof_counts, labels=prof_counts.index, autopct='%1.0f%%',
+               startangle=140, colors=plt.cm.Set3.colors)
+        ax.set_title('Your Behaviour Profiles', fontweight='bold')
+        charts['behaviour_profiles'] = {
+            'base64': self._fig_to_b64(fig),
+            'interpretation': "Your financial year summarized into distinct algorithmic profiles. It shows the proportion of months you spent as an 'Overspender', a 'Disciplined Saver', or a 'Situational Spender', giving you a high-level summary of your financial personality."
+        }
         plt.close(fig)
 
         return charts
