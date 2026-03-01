@@ -208,7 +208,38 @@ class BankStatementAnalyser:
             buf = filepath
 
         if ext in ('xlsx', 'xls'):
-            df = pd.read_excel(buf, dtype=str)
+            # First, read without skipping to find the header row
+            df_test = pd.read_excel(buf, dtype=str, header=None)
+            header_idx = 0
+            
+            # Check if the first row is already a recognizable header
+            has_recognizable = False
+            if not df_test.empty:
+                raw_cols = set(df_test.iloc[0].dropna().astype(str).str.strip().str.lower())
+                for canonical, patterns in COLUMN_SEMANTIC_MAP.items():
+                    if any(any(re.fullmatch(p, raw) for p in patterns) for raw in raw_cols):
+                        has_recognizable = True
+                        break
+            
+            if not has_recognizable:
+                # Scan the first 100 rows for a recognizable header
+                for i in range(min(100, len(df_test))):
+                    row_vals = df_test.iloc[i].dropna().astype(str).str.lower()
+                    if any(any(term in val for val in row_vals) for term in ['date', 'txn date', 'transaction date']):
+                        if any(any(term in val for val in row_vals) for term in ['amount', 'withdrawal', 'deposit', 'debit', 'credit', 'balance', 'description']):
+                            header_idx = i
+                            break
+            
+            if header_idx > 0:
+                 # Re-read from the start to reset the buffer/file pointer if needed
+                 if isinstance(buf, io.BytesIO):
+                     buf.seek(0)
+                 df = pd.read_excel(buf, dtype=str, skiprows=header_idx)
+            else:
+                 if isinstance(buf, io.BytesIO):
+                     buf.seek(0)
+                 df = pd.read_excel(buf, dtype=str)
+
         elif ext in ('tsv', 'txt'):
             df = self._try_delimiters(buf, ['\t', ',', ';', '|'])
         else:  # csv default
@@ -231,14 +262,48 @@ class BankStatementAnalyser:
         best, best_cols = None, 0
         if isinstance(buf, io.BytesIO):
             content = buf.read()
+            content_str = content.decode('utf-8', errors='ignore')
         else:
             with open(buf, 'rb') as f:
                 content = f.read()
+            content_str = content.decode('utf-8', errors='ignore')
+
+        lines = content_str.splitlines()
+
         for delim in delimiters:
             try:
-                df = pd.read_csv(io.BytesIO(content), sep=delim, dtype=str, engine='python')
-                if len(df.columns) > best_cols:
-                    best, best_cols = df, len(df.columns)
+                # 1. First Pass: Try to read the whole file to see if we can find the columns directly
+                df_test = pd.read_csv(io.BytesIO(content), sep=delim, dtype=str, engine='python', on_bad_lines='skip')
+                
+                # Check if this df has any recognizable columns
+                raw_cols = {str(c).strip().lower() for c in df_test.columns}
+                has_recognizable = False
+                for canonical, patterns in COLUMN_SEMANTIC_MAP.items():
+                    if any(any(re.fullmatch(p, raw) for p in patterns) for raw in raw_cols):
+                        has_recognizable = True
+                        break
+                
+                if has_recognizable and len(df_test.columns) > best_cols:
+                    best, best_cols = df_test, len(df_test.columns)
+                    continue
+                
+                # 2. Second Pass: If no recognizable columns, try to find a header row
+                # Many statements have a preamble. Scan the first 100 rows for a recognizable header.
+                header_idx = 0
+                for i, line in enumerate(lines[:100]):
+                    line_lower = line.lower()
+                    if any(term in line_lower for term in ['date', 'txn date', 'transaction date']):
+                        if any(term in line_lower for term in ['amount', 'withdrawal', 'deposit', 'debit', 'credit', 'balance', 'description']):
+                            header_idx = i
+                            break
+                
+                if header_idx > 0:
+                    # Re-read skipping the preamble
+                    clean_content = '\n'.join(lines[header_idx:]).encode('utf-8')
+                    df_skip = pd.read_csv(io.BytesIO(clean_content), sep=delim, dtype=str, engine='python', on_bad_lines='skip')
+                    if len(df_skip.columns) > best_cols:
+                        best, best_cols = df_skip, len(df_skip.columns)
+
             except Exception:
                 continue
         if best is None:
