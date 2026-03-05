@@ -19,7 +19,7 @@ function App() {
     formData.append('statement', file);
 
     try {
-      const response = await fetch('http://localhost:8000/analyse', {
+      const response = await fetch('/analyse', {
         method: 'POST',
         body: formData,
       });
