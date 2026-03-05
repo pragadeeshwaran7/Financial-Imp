@@ -19,7 +19,8 @@ function App() {
     formData.append('statement', file);
 
     try {
-      const response = await fetch('http://localhost:8000/analyse', {
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${apiUrl}/analyse`, {
         method: 'POST',
         body: formData,
       });
@@ -47,55 +48,68 @@ function App() {
 
   return (
     <div className="app-container">
-      <div className="container">
-        <header className="header animate-fade-in">
-          <h1 className="text-gradient">Financial Impulse Analyser</h1>
-          <p>
-            Upload your bank statement to unlock ML-powered insights into your
-            spending behaviours, anomalies, and risk profile.
-          </p>
-        </header>
+      {/* Landing/Upload Section */}
+      {!analysisResult && (
+        <div className="landing-section animate-fade-in">
+          <div className="container" style={{ textAlign: 'center' }}>
+            <h1 className="text-gradient" style={{ marginBottom: '1rem' }}>Your Financial Identity</h1>
+            <p style={{ fontSize: '1.2rem', color: 'var(--text-secondary)', marginBottom: '3rem', maxWidth: '600px', margin: '0 auto 3rem auto' }}>
+              Upload your bank statement to unlock a bold, personalized narrative of your spending behaviour, anomalies, and risk profile.
+            </p>
 
-        <main className="main-content">
-          {error && (
-            <div className="glass-panel" style={{ borderLeft: '4px solid var(--accent-red)' }}>
-              <h3 style={{ color: 'var(--accent-red)' }}>Error analysing statement</h3>
-              <p>{error}</p>
-              <button
-                onClick={handleReset}
-                className="btn-primary"
-                style={{ marginTop: '1rem', background: 'var(--accent-red)' }}
-              >
-                Try Again
-              </button>
-            </div>
-          )}
-
-          {!analysisResult && !error && (
-            <div style={{ maxWidth: '800px', margin: '0 auto', width: '100%' }}>
-              <FileUpload onUploadComplete={handleUpload} isUploading={isUploading} />
-            </div>
-          )}
-
-          {analysisResult && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                <button onClick={handleReset} className="btn-primary" style={{ background: 'var(--glass-bg)', color: 'white' }}>
-                  Analyse Another Statement
+            {error && (
+              <div className="glass-panel" style={{ borderLeft: '4px solid var(--accent-red)', marginBottom: '2rem', textAlign: 'left' }}>
+                <h3 style={{ color: 'var(--accent-red)' }}>Error analysing statement</h3>
+                <p>{error}</p>
+                <button
+                  onClick={handleReset}
+                  className="btn-primary"
+                  style={{ marginTop: '1rem', background: 'var(--accent-red)', color: 'white' }}
+                >
+                  Try Again
                 </button>
               </div>
+            )}
 
-              <Dashboard summary={analysisResult.summary} data={analysisResult} />
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '2rem' }}>
-                <Nudges monthlyScores={analysisResult.monthly_scores} />
+            {!error && (
+              <div style={{ maxWidth: '600px', margin: '0 auto', width: '100%' }}>
+                <FileUpload onUploadComplete={handleUpload} isUploading={isUploading} />
               </div>
+            )}
+          </div>
+        </div>
+      )}
 
-              <ChartsGallery charts={analysisResult.charts} />
-            </div>
-          )}
+      {/* Wrapped Results Flow */}
+      {analysisResult && (
+        <main className="wrapped-flow">
+          <div style={{ position: 'sticky', top: '1rem', right: '1rem', zIndex: 100, display: 'flex', justifyContent: 'flex-end', paddingRight: '2rem' }}>
+            <button onClick={handleReset} className="btn-primary" style={{ background: 'var(--glass-bg)', color: 'white', border: '1px solid rgba(255,255,255,0.2)' }}>
+              Start Over
+            </button>
+          </div>
+
+          <div className="container" style={{ maxWidth: '1000px', margin: '0 auto' }}>
+            <Dashboard summary={analysisResult.summary} data={analysisResult} />
+            <Nudges monthlyScores={analysisResult.monthly_scores} />
+            <ChartsGallery charts={analysisResult.charts} />
+          </div>
         </main>
-      </div>
+      )}
+
+      <style>{`
+        .landing-section {
+          min-height: 100vh;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 2rem;
+        }
+        
+        .wrapped-flow {
+          padding-bottom: 5rem;
+        }
+      `}</style>
     </div>
   );
 }
